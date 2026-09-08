@@ -28,6 +28,12 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run build
+      - name: Normalize Pages artifact paths
+        run: |
+          if [ -d dist/client/qiuzhao-tracker/_next ]; then
+            mv dist/client/qiuzhao-tracker/_next dist/client/_next
+            rmdir dist/client/qiuzhao-tracker
+          fi
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
