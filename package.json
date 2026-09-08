@@ -1,5 +1,5 @@
 {
-  "name": "sites-project",
+  "name": "qiuzhao-tracker",
   "version": "0.1.0",
   "private": true,
   "engines": {
@@ -9,7 +9,9 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
-    "lint": "oxlint app lib",
+    "lint": "oxlint app lib hooks/use-tracker.ts",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
     "format": "oxfmt"
   },
   "dependencies": {
