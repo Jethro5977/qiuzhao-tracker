@@ -10,6 +10,7 @@ export function useTracker() {
   const [error, setError] = useState('');
   const [blocked, setBlocked] = useState(false);
   const [hasRecovery, setHasRecovery] = useState(false);
+  const [savedAt, setSavedAt] = useState('');
   const current = useRef<Job[]>([]);
   const raw = useRef<string | null>(null);
   const locked = useRef(false);
@@ -53,6 +54,7 @@ export function useTracker() {
       try {
         raw.current = writeStorage(localStorage, next, raw.current);
         publish(next);
+        setSavedAt(new Date().toLocaleTimeString('zh-CN'));
         setError('');
         setHasRecovery(true);
       } catch (e) {
@@ -88,5 +90,6 @@ export function useTracker() {
     commit,
     restore,
     reload,
+    savedAt,
   };
 }

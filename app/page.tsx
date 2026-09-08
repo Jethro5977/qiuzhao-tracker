@@ -55,6 +55,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useTracker } from '@/hooks/use-tracker';
+import { CatalogLookup } from '@/components/catalog-lookup';
+import { DRAFT_KEY, parseDraft } from '@/lib/draft';
+import type { Draft } from '@/lib/draft';
 import {
   agenda,
   blankJob,
@@ -212,6 +215,10 @@ export default function Home() {
   const [page, setPage] = useState(1);
   const [editor, setEditor] = useState<Job | null>(null);
   const [baseline, setBaseline] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  const [draftMessage, setDraftMessage] = useState('');
+  const draftRaw = useRef<string | null>(null);
+  const draftReady = useRef(false);
   const [acknowledged, setAcknowledged] = useState(false);
   const [formError, setFormError] = useState('');
   const [notice, setNotice] = useState('');
@@ -227,6 +234,48 @@ export default function Home() {
   const fileRef = useRef<HTMLInputElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const base = today(now);
+  useEffect(() => {
+    try {
+      draftRaw.current = localStorage.getItem(DRAFT_KEY);
+      if (draftRaw.current) setDraft(parseDraft(draftRaw.current));
+      draftReady.current = true;
+    } catch {
+      setDraftMessage('草稿无法读取，已保留原始副本。请导出或检查浏览器存储。');
+    }
+  }, []);
+
+  function persistDraft(job: Job, original: string | null) {
+    try {
+      if (!draftReady.current) throw new Error('草稿存储尚未就绪');
+      if (localStorage.getItem(DRAFT_KEY) !== draftRaw.current)
+        throw new Error('另一窗口已更新草稿，请刷新后继续');
+      const next = {
+        job,
+        baseline: original,
+        savedAt: new Date().toISOString(),
+      };
+      const raw = JSON.stringify(next);
+      localStorage.setItem(DRAFT_KEY, raw);
+      draftRaw.current = raw;
+      setDraft(next);
+      setDraftMessage('草稿已自动保存到本机');
+    } catch (e) {
+      setDraftMessage(
+        `草稿未保存：${e instanceof Error ? e.message : '存储空间不足'}`,
+      );
+    }
+  }
+  function clearDraft() {
+    try {
+      if (localStorage.getItem(DRAFT_KEY) !== draftRaw.current) return;
+      localStorage.removeItem(DRAFT_KEY);
+      draftRaw.current = null;
+      setDraft(null);
+      setDraftMessage('');
+    } catch {
+      setDraftMessage('记录已保存，但旧草稿未能清除');
+    }
+  }
 
   const notify = useCallback((message: string) => {
     setNotice(message);
@@ -413,6 +462,24 @@ export default function Home() {
   const merge = pending ? mergeJobs(store.jobs, pending.jobs) : null;
 
   function openEditor(job?: Job) {
+    if (job && draft && job.id !== draft.job.id) {
+      notify('请先保存或丢弃现有草稿，再编辑其他岗位。');
+      return;
+    }
+    if (job && draft?.job.id === job.id) {
+      setEditor(structuredClone(draft.job));
+      setBaseline(draft.baseline);
+      setAcknowledged(false);
+      setFormError('');
+      return;
+    }
+    if (draft && !job) {
+      setEditor(structuredClone(draft.job));
+      setBaseline(draft.baseline);
+      setAcknowledged(false);
+      setFormError('');
+      return;
+    }
     setEditor(job ? structuredClone(job) : blankJob());
     setBaseline(job?.updatedAt || null);
     setAcknowledged(false);
@@ -421,6 +488,7 @@ export default function Home() {
   function change(key: keyof Job, value: string) {
     if (!editor) return;
     setEditor({ ...editor, [key]: value });
+    persistDraft({ ...editor, [key]: value }, baseline);
     setAcknowledged(false);
     setFormError('');
   }
@@ -439,6 +507,7 @@ export default function Home() {
           : [...store.current.current, job],
       );
       setEditor(null);
+      clearDraft();
       notify('记录已保存');
     } catch (e) {
       setFormError(e instanceof Error ? e.message : '保存失败');
@@ -564,6 +633,39 @@ export default function Home() {
         </div>
       </header>
       <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-8">
+        <output className="mb-3 block text-sm text-slate-600">
+          {store.error
+            ? '保存异常，请查看下方提示'
+            : `自动保存已开启 · 本机存储${store.savedAt ? ' · 最近保存 ' + store.savedAt : ''}`}{' '}
+          · 编辑内容实时保存为草稿，点击保存记录后加入台账。
+        </output>
+        {draft && !editor && (
+          <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
+            <span>
+              有未提交草稿：{draft.job.company || '未填写公司'} ·{' '}
+              {draft.job.position || '未填写岗位'}
+            </span>
+            <Button variant="outline" onClick={() => openEditor()}>
+              继续编辑
+            </Button>
+            <Button variant="ghost" onClick={clearDraft}>
+              丢弃草稿
+            </Button>
+          </div>
+        )}
+        <CatalogLookup
+          onSelect={(job) => {
+            if (draft) {
+              notify('请先保存或丢弃现有草稿，再按序号录入。');
+              return;
+            }
+            setEditor(job);
+            setBaseline(null);
+            setAcknowledged(false);
+            setFormError('');
+            persistDraft(job, null);
+          }}
+        />
         {store.error && (
           <div
             role="alert"
@@ -1078,7 +1180,7 @@ export default function Home() {
               <FileSpreadsheet className="mb-3 size-6" />
               <h2 className="font-semibold">27 届实时岗位来源</h2>
               <p className="mt-2 text-sm leading-6 text-blue-100">
-                查看腾讯原表，复制带表头的目标行后导入台账。原表属于线索来源，开放状态请以招聘官网为准。
+                查看腾讯原表，使用有权限获取的源表建立序号索引。开放状态请以招聘官网为准。
               </p>
               <a
                 className="mt-4 flex items-center justify-between rounded-lg bg-white px-3 py-3 text-sm font-semibold text-blue-700"
@@ -1129,6 +1231,7 @@ export default function Home() {
             </DialogTitle>
             <DialogDescription>
               必填公司与岗位。更新状态会保留流程历史；时间使用当前设备时区。
+              输入内容会自动保存为草稿，刷新后可继续编辑。
             </DialogDescription>
           </DialogHeader>
           {editor && (
@@ -1139,6 +1242,9 @@ export default function Home() {
               }}
               className="space-y-5"
             >
+              <output className="block text-sm text-slate-600">
+                {draftMessage || '开始输入后自动保存草稿'}
+              </output>
               {formError && (
                 <p
                   role="alert"
@@ -1346,7 +1452,7 @@ export default function Home() {
                   variant="outline"
                   onClick={() => setEditor(null)}
                 >
-                  取消
+                  关闭并保留草稿
                 </Button>
                 <Button
                   type="submit"
