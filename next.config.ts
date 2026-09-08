@@ -1,7 +1,7 @@
 import type { NextConfig } from 'next';
 
 const repositoryName = process.env.GITHUB_REPOSITORY?.split('/')[1];
-const basePath =
+const pagesAssetPrefix =
   process.env.GITHUB_ACTIONS === 'true' &&
   repositoryName &&
   !repositoryName.endsWith('.github.io')
@@ -11,8 +11,11 @@ const basePath =
 const nextConfig: NextConfig = {
   output: 'export',
   images: { unoptimized: true },
-  basePath,
-  assetPrefix: basePath,
+  // Keep the route at `/` so Vinext can prerender the entry HTML. GitHub
+  // Pages serves that HTML from the repository subpath; only the generated
+  // assets need the repository prefix.
+  basePath: '',
+  assetPrefix: pagesAssetPrefix,
   trailingSlash: true,
 };
 
