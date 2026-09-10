@@ -160,10 +160,20 @@ export function ScreenshotImport({ onSelect, disabled }: Props) {
                 </strong>
                 <span className="mt-1 block text-sm text-slate-600">
                   {candidate.job.status}
-                  {candidate.observedAt
-                    ? ` · 页面更新 ${candidate.observedAt}`
+                  {candidate.progressLabel !== candidate.job.status
+                    ? ` · 页面进度 ${candidate.progressLabel}`
                     : ''}
                 </span>
+                {candidate.appliedAt && (
+                  <span className="mt-1 block text-sm text-slate-600">
+                    投递时间 {candidate.appliedAt}
+                  </span>
+                )}
+                {candidate.observedAt && (
+                  <span className="mt-1 block text-sm text-slate-600">
+                    页面更新 {candidate.observedAt}
+                  </span>
+                )}
                 {candidate.notice && (
                   <span className="mt-1 block text-xs text-amber-800">
                     {candidate.notice}

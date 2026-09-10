@@ -31,6 +31,7 @@ test('extracts applied jobs and preserves an update notice from a screenshot', (
     ],
   );
   assert.equal(candidates[0].observedAt, '2026-09-10 15:27');
+  assert.equal(candidates[0].appliedAt, '');
   assert.match(candidates[0].notice, /邮件通知/);
 });
 
@@ -54,4 +55,44 @@ test('handles the spaced Chinese OCR output used by common recruitment pages', (
       ['广州汽车集团股份有限公司', '运营管理岗'],
     ],
   );
+});
+
+test('uses the application card instead of sidebar summaries on a noisy FAW screenshot', () => {
+  const candidates = parseScreenshotText(`@ Chrome File Edit View History Bookmarks Profiles Tab Window Help
+中国一汽首页社会招聘校园招聘 Q&A 你好,77退出
+个人中心我的投递全部校园招聘全部项目
+招投标项目经理 。 祸园招聘 ”2027校园招聘 S ” 待处理简历
+.~ 所属公司 : 长春一汽国际招标有限公司 | 所属部门 : 长春一汽国际招标有限公司 | 简历名称 : 于兴浩 &
+w 急 - _20260910_ 默认模板
+4投递时间 : 2026-09-10 18:51
+你好从导出简历撤回投递
+77
+个人信息
+我的投递
+已投递过的职位数 : 1 0
+最近投递 : 招投标项目经理
+最近投递进度 : 待处理简历 am
+我的收藏`);
+
+  assert.equal(candidates.length, 1);
+  assert.deepEqual(
+    {
+      company: candidates[0].job.company,
+      position: candidates[0].job.position,
+      status: candidates[0].job.status,
+      applyDate: candidates[0].job.applyDate,
+      appliedAt: candidates[0].appliedAt,
+      progressLabel: candidates[0].progressLabel,
+    },
+    {
+      company: '长春一汽国际招标有限公司',
+      position: '招投标项目经理',
+      status: '已投递',
+      applyDate: '2026-09-10',
+      appliedAt: '2026-09-10 18:51',
+      progressLabel: '待处理简历',
+    },
+  );
+  assert.doesNotMatch(candidates[0].job.position, /所属公司|简历名称/);
+  assert.doesNotMatch(candidates[0].job.notes, /于兴浩/);
 });
