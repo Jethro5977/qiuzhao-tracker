@@ -1,7 +1,7 @@
 'use client';
 
-import { useRef, useState } from 'react';
-import { ImageUp, LoaderCircle, ScanText } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Check, ImageUp, LoaderCircle, ScanText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { parseScreenshotText } from '@/lib/screenshot';
@@ -9,7 +9,7 @@ import type { ScreenshotCandidate } from '@/lib/screenshot';
 import type { Job } from '@/lib/tracker';
 
 type Props = {
-  onSelect: (job: Job) => void;
+  onSelect: (job: Job) => boolean | void;
   disabled?: boolean;
 };
 
@@ -20,6 +20,13 @@ export function ScreenshotImport({ onSelect, disabled }: Props) {
   const [error, setError] = useState('');
   const [text, setText] = useState('');
   const [candidates, setCandidates] = useState<ScreenshotCandidate[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const timer = window.setTimeout(() => setSelectedId(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [selectedId]);
 
   function parse(textToParse: string) {
     const next = parseScreenshotText(textToParse);
@@ -44,6 +51,7 @@ export function ScreenshotImport({ onSelect, disabled }: Props) {
     setBusy(true);
     setError('');
     setCandidates([]);
+    setSelectedId(null);
     let worker: {
       recognize: (image: File) => Promise<{ data: { text: string } }>;
       terminate: () => Promise<unknown>;
@@ -146,12 +154,22 @@ export function ScreenshotImport({ onSelect, disabled }: Props) {
       )}
       {candidates.length > 0 && (
         <div className="mt-4 space-y-2">
-          <p className="text-sm font-medium text-slate-800">
-            识别到 {candidates.length} 条候选记录
-          </p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium text-slate-800">
+              识别到 {candidates.length} 条候选记录
+            </p>
+            <p className="text-xs text-slate-500">
+              点击后会打开编辑窗口，确认无误后还需点击“保存记录”
+            </p>
+          </div>
           {candidates.map((candidate) => (
             <div
-              className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-violet-200 bg-white p-3"
+              className={
+                'flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-white p-3 transition ' +
+                (selectedId === candidate.job.id
+                  ? 'border-emerald-400 bg-emerald-50/60 ring-2 ring-emerald-200'
+                  : 'border-violet-200')
+              }
               key={candidate.job.id}
             >
               <div className="min-w-0">
@@ -182,13 +200,33 @@ export function ScreenshotImport({ onSelect, disabled }: Props) {
               </div>
               <Button
                 type="button"
-                disabled={disabled}
-                onClick={() => onSelect(candidate.job)}
+                disabled={disabled || selectedId === candidate.job.id}
+                onClick={() => {
+                  const accepted = onSelect(candidate.job);
+                  if (accepted === false) return;
+                  setSelectedId(candidate.job.id);
+                }}
               >
-                核对并录入
+                {selectedId === candidate.job.id ? (
+                  <>
+                    <Check />
+                    已载入编辑器
+                  </>
+                ) : (
+                  '打开编辑器核对'
+                )}
               </Button>
             </div>
           ))}
+          {selectedId && (
+            <output
+              className="flex items-center gap-2 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+              aria-live="polite"
+            >
+              <Check className="size-4" />
+              已载入编辑器，请在弹窗中核对字段并点击“保存记录”完成录入。
+            </output>
+          )}
         </div>
       )}
     </section>

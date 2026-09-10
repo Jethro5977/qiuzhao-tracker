@@ -658,13 +658,14 @@ export default function Home() {
           onSelect={(job) => {
             if (draft) {
               notify('请先保存或丢弃现有草稿，再按序号录入。');
-              return;
+              return false;
             }
             setEditor(job);
             setBaseline(null);
             setAcknowledged(false);
             setFormError('');
             persistDraft(job, null);
+            notify(`已载入「${job.company} · ${job.position}」，请核对后保存`);
           }}
         />
         <ScreenshotImport
@@ -672,13 +673,14 @@ export default function Home() {
           onSelect={(job) => {
             if (draft) {
               notify('请先保存或丢弃现有草稿，再从截图录入。');
-              return;
+              return false;
             }
             setEditor(job);
             setBaseline(null);
             setAcknowledged(false);
             setFormError('');
             persistDraft(job, null);
+            notify(`已载入「${job.company} · ${job.position}」，请核对后保存`);
           }}
         />
         {store.error && (
