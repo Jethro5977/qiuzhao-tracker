@@ -1,17 +1,28 @@
-import { blankJob, parseJob, QQ_SHEET_URL, safeUrl } from './tracker.ts';
-import type { Job } from './tracker.ts';
+import { blankJob, JOB_SOURCES, parseJob, safeUrl } from './tracker.ts';
+import type { Job, JobSource } from './tracker.ts';
 import { parseDelimited } from './transfer.ts';
 
 export const CATALOG_KEY = 'qiuzhao-source-catalog-v1';
+export const CATALOGS_KEY = 'qiuzhao-source-catalog-v2';
 export type CatalogRow = { serial: string; job: Job };
-export type Catalog = { importedAt: string; rows: CatalogRow[] };
+export type Catalog = {
+  sourceId: string;
+  sourceName: string;
+  sourceUrl: string;
+  importedAt: string;
+  rows: CatalogRow[];
+};
+export type CatalogStore = { version: 2; catalogs: Record<string, Catalog> };
 export function normalizeSerial(value: string) {
   const serial = value.normalize('NFKC').trim();
   if (!/^\d{1,10}$/.test(serial))
     throw new Error('请输入原表的数字序号，例如 4150');
   return serial.replace(/^0+(?=\d)/, '');
 }
-export function parseCatalog(text: string): Catalog {
+export function parseCatalog(
+  text: string,
+  source: JobSource = JOB_SOURCES[0],
+): Catalog {
   if (text.length > 10_000_000) throw new Error('源表不能超过 10 MB');
   const rows = parseDelimited(text);
   const index = rows.findIndex((row) => row.some((v) => v.trim() === '序号'));
@@ -40,7 +51,7 @@ export function parseCatalog(text: string): Catalog {
         batch: get('批次') || '2027届秋招',
         applyUrl: safeUrl(link),
         deadline: /^\d{4}-\d{2}-\d{2}$/.test(deadline) ? deadline : '',
-        source: `腾讯岗位源表 · 序号 ${serial} · ${QQ_SHEET_URL}`,
+        source: `腾讯岗位源表 · ${source.name} · 序号 ${serial} · ${source.url}`,
         notes: headers
           .map((header, i) =>
             row[i]?.trim()
@@ -59,7 +70,31 @@ export function parseCatalog(text: string): Catalog {
   }
   if (!result.length || result.length > 10000)
     throw new Error('请导入 1–10000 条有效岗位');
-  return { importedAt: new Date().toISOString(), rows: result };
+  return {
+    sourceId: source.id,
+    sourceName: source.name,
+    sourceUrl: source.url,
+    importedAt: new Date().toISOString(),
+    rows: result,
+  };
+}
+
+export function readCatalogStore(value: unknown): CatalogStore {
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    throw new Error('岗位索引格式无效');
+  const raw = value as Partial<CatalogStore>;
+  if (raw.version !== 2 || !raw.catalogs || typeof raw.catalogs !== 'object')
+    throw new Error('岗位索引版本无效');
+  for (const catalog of Object.values(raw.catalogs)) {
+    if (
+      !catalog ||
+      !Array.isArray(catalog.rows) ||
+      typeof catalog.sourceId !== 'string' ||
+      typeof catalog.importedAt !== 'string'
+    )
+      throw new Error('岗位索引内容无效');
+  }
+  return raw as CatalogStore;
 }
 export function lookupSerial(catalog: Catalog, input: string) {
   const serial = normalizeSerial(input);

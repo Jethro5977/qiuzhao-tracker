@@ -69,9 +69,9 @@ import {
   duplicates,
   encodeBackup,
   FAMILIES,
+  JOB_SOURCES,
   mergeJobs,
   parseJob,
-  QQ_SHEET_URL,
   safeUrl,
   saveRecord,
   STATUSES,
@@ -1197,15 +1197,25 @@ export default function Home() {
               <p className="mt-2 text-sm leading-6 text-blue-100">
                 查看腾讯原表，使用有权限获取的源表建立序号索引。开放状态请以招聘官网为准。
               </p>
-              <a
-                className="mt-4 flex items-center justify-between rounded-lg bg-white px-3 py-3 text-sm font-semibold text-blue-700"
-                href={QQ_SHEET_URL}
-                target="_blank"
-                rel="noreferrer"
-              >
-                打开腾讯文档
-                <ExternalLink className="size-4" />
-              </a>
+              <div className="mt-4 space-y-2">
+                {JOB_SOURCES.map((source, index) => (
+                  <a
+                    className="flex items-center justify-between gap-3 rounded-lg bg-white px-3 py-3 text-sm font-semibold text-blue-700 transition hover:bg-blue-50"
+                    href={source.url}
+                    key={source.id}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-xs font-normal text-blue-500">
+                        来源 {index + 1}
+                      </span>
+                      <span className="block truncate">{source.name}</span>
+                    </span>
+                    <ExternalLink className="size-4 shrink-0" />
+                  </a>
+                ))}
+              </div>
               <p className="mt-3 text-xs text-blue-100">
                 当前采用手动导入，未接入自动同步。
               </p>

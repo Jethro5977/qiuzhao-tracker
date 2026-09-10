@@ -1,7 +1,20 @@
 export const STORAGE_KEY = 'qiuzhao-tracker-v3';
 export const RECOVERY_KEY = 'qiuzhao-tracker-recovery';
-export const QQ_SHEET_URL =
-  'https://docs.qq.com/sheet/DQUNxdHRXcndkeHFK?tab=986nx3';
+export const JOB_SOURCES = [
+  {
+    id: 'campus-2027',
+    name: '2027届校招信息汇总表',
+    url: 'https://docs.qq.com/sheet/DQUNxdHRXcndkeHFK?tab=986nx3',
+  },
+  {
+    id: 'afa-2027',
+    name: '【阿发】2027届实习+校招汇总表',
+    url: 'https://docs.qq.com/sheet/DQWVVWm1vcUJzU3Vy?tab=WLaNT6',
+  },
+] as const;
+export type JobSourceId = (typeof JOB_SOURCES)[number]['id'];
+export type JobSource = (typeof JOB_SOURCES)[number];
+export const QQ_SHEET_URL = JOB_SOURCES[0].url;
 export const STATUSES = [
   '待投递',
   '已投递',
