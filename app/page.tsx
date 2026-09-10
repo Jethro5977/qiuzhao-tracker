@@ -56,6 +56,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useTracker } from '@/hooks/use-tracker';
 import { CatalogLookup } from '@/components/catalog-lookup';
+import { ScreenshotImport } from '@/components/screenshot-import';
 import { DRAFT_KEY, parseDraft } from '@/lib/draft';
 import type { Draft } from '@/lib/draft';
 import {
@@ -657,6 +658,20 @@ export default function Home() {
           onSelect={(job) => {
             if (draft) {
               notify('请先保存或丢弃现有草稿，再按序号录入。');
+              return;
+            }
+            setEditor(job);
+            setBaseline(null);
+            setAcknowledged(false);
+            setFormError('');
+            persistDraft(job, null);
+          }}
+        />
+        <ScreenshotImport
+          disabled={store.blocked}
+          onSelect={(job) => {
+            if (draft) {
+              notify('请先保存或丢弃现有草稿，再从截图录入。');
               return;
             }
             setEditor(job);
