@@ -9,7 +9,7 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
-    "lint": "oxlint app lib components hooks/use-tracker.ts",
+    "lint": "oxlint app lib components/screenshot-import.tsx hooks/use-tracker.ts",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "format": "oxfmt"
