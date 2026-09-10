@@ -13,6 +13,8 @@ import {
   ExternalLink,
   FileSpreadsheet,
   LayoutGrid,
+  BarChart3,
+  UserRound,
   ListFilter,
   Pencil,
   Plus,
@@ -55,9 +57,12 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useTracker } from '@/hooks/use-tracker';
+import { useCurrentUser } from '@/hooks/use-current-user';
+import { UserSwitcher, Welcome } from '@/components/user-switcher';
+import { DashboardView } from '@/components/dashboard-view';
+import { ScheduleView } from '@/components/schedule-view';
 import { CatalogLookup } from '@/components/catalog-lookup';
 import { ScreenshotImport } from '@/components/screenshot-import';
-import { DRAFT_KEY, parseDraft } from '@/lib/draft';
 import type { Draft } from '@/lib/draft';
 import {
   agenda,
@@ -67,7 +72,6 @@ import {
   completeNext,
   dayDistance,
   duplicates,
-  encodeBackup,
   FAMILIES,
   JOB_SOURCES,
   mergeJobs,
@@ -75,7 +79,6 @@ import {
   safeUrl,
   saveRecord,
   STATUSES,
-  STORAGE_KEY,
   today,
 } from '@/lib/tracker';
 import type { Job, Status } from '@/lib/tracker';
@@ -87,8 +90,23 @@ import {
   parseImport,
 } from '@/lib/transfer';
 import type { ImportResult } from '@/lib/transfer';
+import { parseBatch } from '@/lib/batch';
+import {
+  clearDraft as clearUserDraft,
+  estimateUserBytes,
+  exportUserData,
+  importUserData,
+  loadDraft,
+  loadInterviewLogs,
+  loadSettings,
+  saveDraft as saveUserDraft,
+  saveInterviewLogs,
+  saveSettings,
+} from '@/lib/storage';
+import type { InterviewLog } from '@/lib/storage';
+import type { User } from '@/lib/user';
 
-type View = 'table' | 'kanban' | 'agenda';
+type View = 'table' | 'kanban' | 'agenda' | 'dashboard';
 const STYLE: Record<Status, string> = {
   待投递: 'status-slate',
   已投递: 'status-blue',
@@ -207,7 +225,16 @@ function When({
 }
 
 export default function Home() {
-  const store = useTracker();
+  const account = useCurrentUser();
+  if (!account.ready) return <main className="grid min-h-screen place-items-center">正在读取本机用户…</main>;
+  if (!account.user) return <Welcome onCreate={account.createUser} />;
+  return <TrackerApp key={account.userId} account={{ ...account, user: account.user }} />;
+}
+
+type Account = ReturnType<typeof useCurrentUser> & { user: User };
+function TrackerApp({ account }: { account: Account }) {
+  const userId = account.userId;
+  const store = useTracker(userId);
   const [view, setView] = useState<View>('table');
   const [scope, setScope] = useState('全部');
   const [filter, setFilter] = useState('全部状态');
@@ -225,39 +252,38 @@ export default function Home() {
   const [notice, setNotice] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<Job | null>(null);
   const [lastDeleted, setLastDeleted] = useState<Job | null>(null);
-  const [restoreOpen, setRestoreOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [pasted, setPasted] = useState('');
   const [pending, setPending] = useState<ImportResult | null>(null);
+  const [batchText, setBatchText] = useState('');
+  const [selected, setSelected] = useState<string[]>([]);
+  const [bulkStatus, setBulkStatus] = useState<Status>('已投递');
+  const [logs, setLogs] = useState<InterviewLog[]>(() => loadInterviewLogs(userId));
+  const [logDraft, setLogDraft] = useState<Omit<InterviewLog, 'id' | 'applicationId' | 'createdAt'>>({ round: '一面', date: '', interviewer: '', questions: '', reflection: '', result: '待定' });
+  const [editingLogId, setEditingLogId] = useState('');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settings, setSettingsState] = useState(() => loadSettings(userId));
   const [importError, setImportError] = useState('');
   const [now, setNow] = useState(() => new Date());
   const fileRef = useRef<HTMLInputElement>(null);
+  const settingsFileRef = useRef<HTMLInputElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const base = today(now);
   useEffect(() => {
-    try {
-      draftRaw.current = localStorage.getItem(DRAFT_KEY);
-      if (draftRaw.current) setDraft(parseDraft(draftRaw.current));
-      draftReady.current = true;
-    } catch {
-      setDraftMessage('草稿无法读取，已保留原始副本。请导出或检查浏览器存储。');
-    }
-  }, []);
+    queueMicrotask(() => { try { const saved = loadDraft(userId); if (saved) setDraft(saved); draftReady.current = true; } catch { setDraftMessage('草稿无法读取，已保留原始副本。请导出或检查浏览器存储。'); } });
+  }, [userId]);
 
   function persistDraft(job: Job, original: string | null) {
     try {
       if (!draftReady.current) throw new Error('草稿存储尚未就绪');
-      if (localStorage.getItem(DRAFT_KEY) !== draftRaw.current)
-        throw new Error('另一窗口已更新草稿，请刷新后继续');
       const next = {
         job,
         baseline: original,
         savedAt: new Date().toISOString(),
       };
-      const raw = JSON.stringify(next);
-      localStorage.setItem(DRAFT_KEY, raw);
-      draftRaw.current = raw;
+      saveUserDraft(userId, next);
+      draftRaw.current = JSON.stringify(next);
       setDraft(next);
       setDraftMessage('草稿已自动保存到本机');
     } catch (e) {
@@ -268,8 +294,7 @@ export default function Home() {
   }
   function clearDraft() {
     try {
-      if (localStorage.getItem(DRAFT_KEY) !== draftRaw.current) return;
-      localStorage.removeItem(DRAFT_KEY);
+      clearUserDraft(userId);
       draftRaw.current = null;
       setDraft(null);
       setDraftMessage('');
@@ -283,6 +308,20 @@ export default function Home() {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setNotice(''), 5000);
   }, []);
+  useEffect(() => {
+    if (!settings.notifications || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); const tomorrowKey = today(tomorrow);
+    const due = store.jobs.filter((job) => job.nextDate === base || job.nextDate === tomorrowKey);
+    due.slice(0, 3).forEach((job) => new Notification(`${job.nextDate === base ? '今天' : '明天'}有 ${job.company} 的${job.nextStep || job.status}`, { body: job.position }));
+  }, [settings.notifications, store.jobs, base]);
+
+  async function toggleNotifications(enabled: boolean) {
+    if (enabled && typeof Notification !== 'undefined') {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') { notify('浏览器未授予通知权限'); return; }
+    }
+    const next = { notifications: enabled }; saveSettings(userId, next); setSettingsState(next); notify(enabled ? '浏览器提醒已开启' : '浏览器提醒已关闭');
+  }
   useEffect(() => {
     const tick = () => setNow(new Date());
     const interval = setInterval(tick, 60000);
@@ -461,6 +500,8 @@ export default function Home() {
       ? duplicates(editor, store.jobs)
       : [];
   const merge = pending ? mergeJobs(store.jobs, pending.jobs) : null;
+  const batchRows = useMemo(() => batchText.trim() ? parseBatch(batchText, store.jobs) : [], [batchText, store.jobs]);
+  const readyBatch = batchRows.filter((row) => row.state === 'ready' && row.job).map((row) => row.job as Job);
 
   function openEditor(job?: Job) {
     if (job && draft && job.id !== draft.job.id) {
@@ -565,16 +606,35 @@ export default function Home() {
       setImportError(e instanceof Error ? e.message : '导入失败');
     }
   }
+  function confirmBatch() {
+    if (!readyBatch.length) return;
+    store.commit([...store.current.current, ...readyBatch]);
+    setBatchText('');
+    setImportOpen(false);
+    notify(`已批量录入 ${readyBatch.length} 条，重复和无效行已跳过`);
+  }
+  function applyBulkStatus() {
+    if (!selected.length) return;
+    store.commit(store.current.current.map((job) => selected.includes(job.id) ? saveRecord({ ...job, status: bulkStatus }, job) : job));
+    notify(`已更新 ${selected.length} 条岗位为“${bulkStatus}”`);
+    setSelected([]);
+  }
+  function addInterviewLog() {
+    if (!editor || !baseline) { setFormError('请先保存岗位，再添加面试记录'); return; }
+    if (!logDraft.date) { setFormError('请选择面试日期'); return; }
+    const record: InterviewLog = { ...logDraft, id: editingLogId || crypto.randomUUID(), applicationId: editor.id, createdAt: logs.find((log) => log.id === editingLogId)?.createdAt || new Date().toISOString() };
+    const next: InterviewLog[] = editingLogId ? logs.map((log) => log.id === editingLogId ? record : log) : [...logs, record];
+    saveInterviewLogs(userId, next); setLogs(next); setEditingLogId(''); setLogDraft({ round: '一面', date: '', interviewer: '', questions: '', reflection: '', result: '待定' }); notify(editingLogId ? '面试记录已更新' : '面试记录已保存');
+  }
   function exportFile(kind: 'json' | 'csv' | 'ics' | 'raw') {
     try {
       if (kind === 'raw')
         download(
-          '秋招原始数据.txt',
-          localStorage.getItem(STORAGE_KEY) || '',
-          'text/plain',
+          `qiuzhao_${account.user.nickname}_${base}.json`,
+          exportUserData(userId, account.user),
         );
       else if (kind === 'json')
-        download('秋招完整备份-' + base + '.json', encodeBackup(store.jobs));
+        download(`qiuzhao_${account.user.nickname}_${base}.json`, exportUserData(userId, account.user));
       else if (kind === 'csv')
         download(
           '秋招汇总表-' + base + '.csv',
@@ -617,7 +677,7 @@ export default function Home() {
               </p>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" onClick={() => setImportOpen(true)}>
               <ArrowUpFromLine />
               批量导入
@@ -626,6 +686,10 @@ export default function Home() {
               <ArrowDownToLine />
               导出与备份
             </Button>
+            <Button variant="outline" onClick={() => setSettingsOpen(true)}>
+              <UserRound />设置
+            </Button>
+            <UserSwitcher users={account.users} user={account.user} onSwitch={account.switchUser} onCreate={account.createUser} onUpdate={account.updateUser} onDelete={account.deleteUser} />
             <Button disabled={store.blocked} onClick={() => openEditor()}>
               <Plus />
               新增岗位
@@ -640,6 +704,7 @@ export default function Home() {
             : `自动保存已开启 · 本机存储${store.savedAt ? ' · 最近保存 ' + store.savedAt : ''}`}{' '}
           · 编辑内容实时保存为草稿，点击保存记录后加入台账。
         </output>
+        {account.migrationCount > 0 && <p className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">旧版数据迁移完成：已迁移 {account.migrationCount} 条岗位记录。</p>}
         {draft && !editor && (
           <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
             <span>
@@ -655,6 +720,7 @@ export default function Home() {
           </div>
         )}
         <CatalogLookup
+          userId={userId}
           onSelect={(job) => {
             if (draft) {
               notify('请先保存或丢弃现有草稿，再按序号录入。');
@@ -696,11 +762,6 @@ export default function Home() {
               <Button variant="outline" onClick={store.reload}>
                 重新读取
               </Button>
-              {store.hasRecovery && (
-                <Button variant="outline" onClick={() => setRestoreOpen(true)}>
-                  恢复上次备份
-                </Button>
-              )}
             </div>
           </div>
         )}
@@ -771,6 +832,7 @@ export default function Home() {
                     { v: 'table', label: '汇总表', Icon: ListFilter },
                     { v: 'kanban', label: '进度看板', Icon: LayoutGrid },
                     { v: 'agenda', label: '日程', Icon: CalendarClock },
+                    { v: 'dashboard', label: '数据', Icon: BarChart3 },
                   ] as const
                 ).map(({ v, label, Icon }) => (
                   <Button
@@ -889,9 +951,11 @@ export default function Home() {
                     </div>
                   ) : view === 'table' ? (
                     <>
-                      <Table>
+                      <div className="space-y-3 p-4 sm:hidden">{pageItems.map((job) => <article className="rounded-xl border p-4" key={job.id}><div className="flex items-start justify-between gap-3"><div><button className="record-title" onClick={() => openEditor(job)}>{job.company}</button><p className="mt-1 text-sm">{job.position}</p></div><StatusBadge status={job.status} /></div><p className="mt-3 text-sm text-slate-500">{job.nextStep || '暂无下一步'}{job.nextDate ? ` · ${job.nextDate.slice(5)}` : ''}</p><Button className="mt-3 w-full" variant="outline" onClick={() => openEditor(job)}>查看与编辑</Button></article>)}</div>
+                      <Table className="hidden sm:table">
                         <TableHeader>
                           <TableRow className="bg-slate-50">
+                            <TableHead className="w-10 pl-4"><Checkbox aria-label="选择本页全部岗位" checked={pageItems.length > 0 && pageItems.every((job) => selected.includes(job.id))} onCheckedChange={(checked) => setSelected(checked === true ? Array.from(new Set([...selected, ...pageItems.map((job) => job.id)])) : selected.filter((id) => !pageItems.some((job) => job.id === id)))} /></TableHead>
                             <TableHead className="pl-4">公司 / 岗位</TableHead>
                             <TableHead>进度</TableHead>
                             <TableHead>下一步 / 截止</TableHead>
@@ -904,6 +968,7 @@ export default function Home() {
                         <TableBody>
                           {pageItems.map((job) => (
                             <TableRow key={job.id}>
+                              <TableCell className="pl-4"><Checkbox aria-label={`选择 ${job.company} ${job.position}`} checked={selected.includes(job.id)} onCheckedChange={(checked) => setSelected(checked === true ? [...selected, job.id] : selected.filter((id) => id !== job.id))} /></TableCell>
                               <TableCell className="min-w-[220px] pl-4">
                                 <button
                                   className="record-title"
@@ -915,6 +980,7 @@ export default function Home() {
                                       重点
                                     </span>
                                   )}
+                                  {logs.some((log) => log.applicationId === job.id) && <span className="ml-2" title="有面试记录">📝</span>}
                                 </button>
                                 <p className="max-w-[280px] whitespace-normal text-sm text-slate-700">
                                   {job.position}
@@ -1061,8 +1127,9 @@ export default function Home() {
                         </section>
                       ))}
                     </div>
-                  ) : (
+                  ) : view === 'agenda' ? (
                     <div className="p-4">
+                      <div className="mb-5 overflow-x-auto"><ScheduleView jobs={items} onOpen={openEditor} /></div>
                       <p className="mb-3 text-sm text-slate-500">
                         全部未完成日程与待投递截止时间。时间按当前设备时区显示。
                       </p>
@@ -1124,7 +1191,7 @@ export default function Home() {
                         </div>
                       ))}
                     </div>
-                  )}
+                  ) : <div className="p-4"><DashboardView jobs={store.jobs} logs={logs} /></div>}
                 </TabsContent>
               ))}
             </Tabs>
@@ -1231,19 +1298,12 @@ export default function Home() {
                 记录只保存在当前浏览器。换设备或清理浏览器前，请导出完整 JSON
                 备份；CSV 用于表格查看。
               </p>
-              {store.hasRecovery && (
-                <Button
-                  variant="link"
-                  className="mt-1 px-0"
-                  onClick={() => setRestoreOpen(true)}
-                >
-                  恢复上次写入前的数据
-                </Button>
-              )}
             </section>
           </aside>
         </div>
       </div>
+
+      {selected.length > 0 && <div className="fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 flex-wrap items-center gap-2 rounded-2xl border bg-white p-3 shadow-2xl"><strong className="px-2 text-sm">已选 {selected.length} 条</strong><Select label="批量状态" value={bulkStatus} options={STATUSES} onChange={(value) => setBulkStatus(value as Status)} /><Button onClick={applyBulkStatus}>批量更新</Button><Button variant="ghost" onClick={() => setSelected([])}>取消</Button></div>}
 
       <Dialog
         open={Boolean(editor)}
@@ -1445,6 +1505,11 @@ export default function Home() {
                   />
                 </Field>
               </div>
+              <section className="rounded-xl border bg-slate-50 p-4">
+                <div className="flex items-center justify-between"><h3 className="font-semibold">面试记录</h3><span className="text-sm text-slate-500">{logs.filter((log) => log.applicationId === editor.id).length} 轮</span></div>
+                <div className="mt-3 space-y-2">{logs.filter((log) => log.applicationId === editor.id).sort((a, b) => b.date.localeCompare(a.date)).map((log) => <details key={log.id} className="rounded-lg border bg-white p-3"><summary className="cursor-pointer text-sm font-medium">{log.date} · {log.round} · {log.result}</summary><div className="mt-3 space-y-2 text-sm"><p><strong>面试官：</strong>{log.interviewer || '未记录'}</p><p className="whitespace-pre-wrap"><strong>问题：</strong>{log.questions || '未记录'}</p><p className="whitespace-pre-wrap"><strong>复盘：</strong>{log.reflection || '未记录'}</p><div className="flex gap-2"><Button type="button" size="sm" variant="outline" onClick={() => { setEditingLogId(log.id); setLogDraft({ round: log.round, date: log.date, interviewer: log.interviewer, questions: log.questions, reflection: log.reflection, result: log.result }); }}>编辑</Button><Button type="button" size="sm" variant="destructive" onClick={() => { const next = logs.filter((item) => item.id !== log.id); saveInterviewLogs(userId, next); setLogs(next); }}>删除</Button></div></div></details>)}</div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2"><Field label="轮次"><Select label="面试轮次" value={logDraft.round} options={['笔试','一面','二面','三面/终面','HR面']} onChange={(value) => setLogDraft({ ...logDraft, round: value as InterviewLog['round'] })} /></Field><Field label="日期"><Input type="date" value={logDraft.date} onChange={(e) => setLogDraft({ ...logDraft, date: e.target.value })} /></Field><Field label="面试官"><Input value={logDraft.interviewer} onChange={(e) => setLogDraft({ ...logDraft, interviewer: e.target.value })} /></Field><Field label="结果"><Select label="面试结果" value={logDraft.result} options={['待定','通过','未通过']} onChange={(value) => setLogDraft({ ...logDraft, result: value as InterviewLog['result'] })} /></Field><Field label="面试问题" wide><Textarea value={logDraft.questions} onChange={(e) => setLogDraft({ ...logDraft, questions: e.target.value })} /></Field><Field label="复盘" wide><Textarea value={logDraft.reflection} onChange={(e) => setLogDraft({ ...logDraft, reflection: e.target.value })} /></Field></div><Button type="button" className="mt-3" variant="outline" onClick={addInterviewLog}>{editingLogId ? '保存修改' : '新增本轮记录'}</Button>
+              </section>
               {editor.history.length > 0 && (
                 <details className="rounded-xl border p-3">
                   <summary className="cursor-pointer text-sm font-semibold">
@@ -1541,6 +1606,12 @@ export default function Home() {
               placeholder="公司名称&#9;招聘岗位&#9;工作地点&#9;投递链接"
             />
           </Field>
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
+            <p className="font-medium">快速两列录入</p><p className="mt-1 text-sm text-slate-600">无需表头；每行“公司 + 岗位”，支持 Tab、逗号或竖线。第 3、4 列可选填地点和渠道。</p>
+            <Textarea className="mt-3 min-h-24 bg-white" value={batchText} onChange={(e) => setBatchText(e.target.value)} placeholder={'腾讯\t前端开发工程师\t深圳\t官网'} />
+            {batchRows.length > 0 && <div className="mt-3 max-h-48 space-y-1 overflow-y-auto text-sm">{batchRows.map((row) => <p key={row.line} className={row.state === 'ready' ? 'text-emerald-700' : row.state === 'duplicate' ? 'text-amber-700' : 'text-rose-700'}>{row.state === 'ready' ? '✅' : row.state === 'duplicate' ? '⚠️' : '❌'} 第 {row.line} 行 · {row.job ? `${row.job.company} · ${row.job.position}` : row.message}</p>)}</div>}
+            <Button className="mt-3" disabled={!readyBatch.length} onClick={confirmBatch}>确认录入 {readyBatch.length} 条（跳过 {batchRows.length - readyBatch.length} 条）</Button>
+          </div>
           <Button
             variant="outline"
             disabled={!pasted.trim()}
@@ -1628,6 +1699,15 @@ export default function Home() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>个人设置与数据安全</DialogTitle><DialogDescription>设置和备份只作用于 {account.user.nickname}，不会读取其他用户的数据。</DialogDescription></DialogHeader>
+          <div className="flex items-center justify-between rounded-xl border p-4"><div><p className="font-medium">浏览器日程提醒</p><p className="mt-1 text-sm text-slate-500">仅在页面打开时检查今天和明天的事项，不是后台推送。</p></div><Checkbox checked={settings.notifications} onCheckedChange={(checked) => void toggleNotifications(Boolean(checked))} aria-label="开启浏览器提醒" /></div>
+          <div className="rounded-xl border p-4"><p className="font-medium">本机存储用量</p><p className="mt-1 text-sm text-slate-500">当前用户约 {(estimateUserBytes(userId) / 1024).toFixed(1)} KB / 约 5 MB（{(estimateUserBytes(userId) / 5_000_000 * 100).toFixed(1)}%）</p>{estimateUserBytes(userId) > 4_000_000 && <p className="mt-2 text-sm text-rose-700">已接近容量上限，请先导出备份并清理已结束记录。</p>}</div>
+          <input ref={settingsFileRef} className="hidden" type="file" accept=".json" onChange={async (event) => { const file = event.target.files?.[0]; if (!file) return; try { const mode = confirm('点击“确定”合并数据；点击“取消”将覆盖当前用户数据。') ? 'merge' : 'replace'; const result = importUserData(userId, await file.text(), mode); store.reload(); setLogs(loadInterviewLogs(userId)); notify(`导入完成：新增 ${result.added} 条，跳过 ${result.skipped} 条`); } catch (cause) { notify(cause instanceof Error ? cause.message : '导入失败'); } finally { if (settingsFileRef.current) settingsFileRef.current.value = ''; } }} />
+          <div className="grid gap-2 sm:grid-cols-2"><Button onClick={() => exportFile('json')}>导出我的完整数据</Button><Button variant="outline" onClick={() => settingsFileRef.current?.click()}>导入完整备份</Button></div>
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog
         open={Boolean(deleteTarget)}
         onOpenChange={(open) => {
@@ -1669,34 +1749,6 @@ export default function Home() {
               }}
             >
               确认删除
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={restoreOpen} onOpenChange={setRestoreOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>恢复上次写入前的数据？</AlertDialogTitle>
-            <AlertDialogDescription>
-              当前台账将替换为自动备份。系统会另外保留恢复前的原始副本，建议先导出完整备份。
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <Button variant="outline" onClick={() => setRestoreOpen(false)}>
-              取消
-            </Button>
-            <Button
-              onClick={() => {
-                try {
-                  store.restore();
-                  setRestoreOpen(false);
-                  notify('已恢复上次备份');
-                } catch (e) {
-                  notify(e instanceof Error ? e.message : '恢复失败');
-                }
-              }}
-            >
-              确认恢复
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>

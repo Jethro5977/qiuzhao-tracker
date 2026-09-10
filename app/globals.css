@@ -167,6 +167,18 @@
 .source-card {
   @apply rounded-2xl bg-gradient-to-br from-blue-700 to-indigo-700 p-4 text-white shadow-xl shadow-blue-900/10;
 }
+.menu-action {
+  @apply flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-100;
+}
+.menu-action svg { @apply size-4; }
+.insight-card { @apply rounded-2xl border border-slate-200 bg-white p-5; }
+.insight-card h3 { @apply font-semibold; }
+.schedule-item { @apply block w-full rounded-lg p-2 text-left text-sm; }
+.schedule-item span, .schedule-item strong, .schedule-item small { @apply block; }
+.schedule-item small { @apply mt-1 truncate opacity-70; }
+.schedule-笔试 { @apply bg-amber-100 text-amber-950; }
+.schedule-面试 { @apply bg-fuchsia-100 text-fuchsia-950; }
+.schedule-截止 { @apply bg-rose-100 text-rose-950; }
 @media (max-width: 640px) {
   .metric-card {
     @apply p-3;
@@ -243,6 +255,14 @@ summary:focus-visible {
     flex-wrap: wrap;
   }
   [data-slot='dialog-content'] {
+    width: 100vw;
+    max-width: none;
+    height: 96dvh;
+    top: auto;
+    bottom: 0;
+    transform: translateX(-50%);
+    border-radius: 1.25rem 1.25rem 0 0;
     padding: 1rem;
   }
+  .user-menu { position: fixed; inset: 0; width: 100%; margin: 0; border-radius: 0; padding: 1.25rem; }
 }

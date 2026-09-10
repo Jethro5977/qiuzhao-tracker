@@ -1,0 +1,10 @@
+{
+  "name": "秋招投递台账",
+  "short_name": "秋招台账",
+  "description": "岗位、笔试、面试与复盘进度管理",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#2563eb",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

@@ -1,25 +1,43 @@
-import {
-  STORAGE_KEY,
-  RECOVERY_KEY,
-  encodeBackup,
-  parseBackup,
-} from './tracker.ts';
+import { CATALOGS_KEY, CATALOG_KEY, readCatalogStore } from './catalog.ts';
+import type { Catalog } from './catalog.ts';
+import { DRAFT_KEY, parseDraft } from './draft.ts';
+import type { Draft } from './draft.ts';
+import { RECOVERY_KEY, STORAGE_KEY, encodeBackup, parseBackup, parseJob } from './tracker.ts';
 import type { Job } from './tracker.ts';
-export type StoragePort = Pick<Storage, 'getItem' | 'setItem'>;
-export function readStorage(storage: StoragePort) {
-  const raw = storage.getItem(STORAGE_KEY);
-  return { raw, jobs: raw ? parseBackup(raw) : [] };
-}
-export function writeStorage(
-  storage: StoragePort,
-  jobs: Job[],
-  expected: string | null,
-) {
-  if (storage.getItem(STORAGE_KEY) !== expected)
-    throw new Error('另一窗口已更新数据，请重新打开记录后再保存。');
-  // Never overwrite the active copy if recovery backup cannot be written.
-  if (expected) storage.setItem(RECOVERY_KEY, expected);
-  const raw = encodeBackup(jobs);
-  storage.setItem(STORAGE_KEY, raw);
-  return raw;
-}
+import type { User } from './user.ts';
+
+export type StoragePort = Pick<Storage, 'getItem' | 'setItem'> & Partial<Pick<Storage, 'removeItem' | 'key' | 'length'>>;
+export interface InterviewLog { id: string; applicationId: string; round: '笔试' | '一面' | '二面' | '三面/终面' | 'HR面'; date: string; interviewer: string; questions: string; reflection: string; result: '通过' | '未通过' | '待定'; createdAt: string }
+export interface UserSettings { notifications: boolean }
+export interface UserBackup { schemaVersion: 5; user: User; exportedAt: string; applications: Job[]; interviewLogs: InterviewLog[]; sourceIndexes: Record<string, Catalog>; settings: UserSettings }
+export const USERS_KEY = 'qz_users';
+export const CURRENT_USER_KEY = 'qz_current_user';
+export const MIGRATION_KEY = 'qz_migration_done';
+export function getStorageKey(userId: string, domain: string) { if (!userId) throw new Error('用户 ID 不能为空'); return `qz_${userId}_${domain}`; }
+function browserStorage(): Storage { if (typeof window === 'undefined') throw new Error('浏览器存储不可用'); return window.localStorage; }
+function readJson<T>(storage: StoragePort, key: string, fallback: T): T { const raw = storage.getItem(key); return raw ? JSON.parse(raw) as T : fallback; }
+export function loadUsers(storage: StoragePort = browserStorage()): User[] { const users = readJson<unknown>(storage, USERS_KEY, []); if (!Array.isArray(users)) throw new Error('用户列表格式无效'); return users.filter((u): u is User => Boolean(u && typeof u === 'object' && typeof (u as User).id === 'string' && typeof (u as User).nickname === 'string' && typeof (u as User).avatar === 'string')); }
+export function saveUsers(users: User[], storage: StoragePort = browserStorage()) { storage.setItem(USERS_KEY, JSON.stringify(users)); }
+export function loadCurrentUserId(storage: StoragePort = browserStorage()) { return storage.getItem(CURRENT_USER_KEY) || ''; }
+export function saveCurrentUserId(userId: string, storage: StoragePort = browserStorage()) { storage.setItem(CURRENT_USER_KEY, userId); }
+export function loadApplications(userId: string, storage: StoragePort = browserStorage()): Job[] { const raw = storage.getItem(getStorageKey(userId, 'applications')); return raw ? parseBackup(raw) : []; }
+export function saveApplications(userId: string, apps: Job[], storage: StoragePort = browserStorage()) { storage.setItem(getStorageKey(userId, 'applications'), encodeBackup(apps)); }
+function sourceDomain(sourceId: string) { return sourceId === 'campus-2027' ? 'source_index_1' : sourceId === 'afa-2027' ? 'source_index_2' : `source_index_${sourceId}`; }
+export function loadSourceIndex(userId: string, sourceId: string, storage: StoragePort = browserStorage()): Catalog | null { const value = readJson<Catalog | null>(storage, getStorageKey(userId, sourceDomain(sourceId)), null); return value && Array.isArray(value.rows) ? value : null; }
+export function loadSourceIndexes(userId: string, storage: StoragePort = browserStorage()): Record<string, Catalog> { const result: Record<string, Catalog> = {}; for (const id of ['campus-2027', 'afa-2027']) { const catalog = loadSourceIndex(userId, id, storage); if (catalog) result[id] = catalog; } return result; }
+export function saveSourceIndex(userId: string, sourceId: string, data: Catalog, storage: StoragePort = browserStorage()) { storage.setItem(getStorageKey(userId, sourceDomain(sourceId)), JSON.stringify(data)); }
+export function loadInterviewLogs(userId: string, storage: StoragePort = browserStorage()): InterviewLog[] { const value = readJson<unknown>(storage, getStorageKey(userId, 'interview_logs'), []); return Array.isArray(value) ? value as InterviewLog[] : []; }
+export function saveInterviewLogs(userId: string, logs: InterviewLog[], storage: StoragePort = browserStorage()) { storage.setItem(getStorageKey(userId, 'interview_logs'), JSON.stringify(logs)); }
+export function loadSettings(userId: string, storage: StoragePort = browserStorage()): UserSettings { return { notifications: false, ...readJson<Partial<UserSettings>>(storage, getStorageKey(userId, 'settings'), {}) }; }
+export function saveSettings(userId: string, settings: UserSettings, storage: StoragePort = browserStorage()) { storage.setItem(getStorageKey(userId, 'settings'), JSON.stringify(settings)); }
+export function loadDraft(userId: string, storage: StoragePort = browserStorage()): Draft | null { const raw = storage.getItem(getStorageKey(userId, 'draft')); return raw ? parseDraft(raw) : null; }
+export function saveDraft(userId: string, draft: Draft, storage: StoragePort = browserStorage()) { storage.setItem(getStorageKey(userId, 'draft'), JSON.stringify(draft)); }
+export function clearDraft(userId: string, storage: StoragePort = browserStorage()) { storage.removeItem?.(getStorageKey(userId, 'draft')); }
+export function clearUserData(userId: string, storage: StoragePort = browserStorage()) { if (storage.key && typeof storage.length === 'number') { const keys = Array.from({ length: storage.length }, (_, i) => storage.key?.(i) || '').filter((key) => key.startsWith(`qz_${userId}_`)); keys.forEach((key) => storage.removeItem?.(key)); } else ['applications', 'interview_logs', 'settings', 'draft', 'source_index_1', 'source_index_2'].forEach((domain) => storage.removeItem?.(getStorageKey(userId, domain))); }
+export function exportUserData(userId: string, user: User, storage: StoragePort = browserStorage()) { return JSON.stringify({ schemaVersion: 5, user, exportedAt: new Date().toISOString(), applications: loadApplications(userId, storage), interviewLogs: loadInterviewLogs(userId, storage), sourceIndexes: loadSourceIndexes(userId, storage), settings: loadSettings(userId, storage) } satisfies UserBackup, null, 2); }
+export function importUserData(userId: string, json: string, mode: 'merge' | 'replace', storage: StoragePort = browserStorage()) { const raw = JSON.parse(json) as Partial<UserBackup>; if (raw.schemaVersion !== 5 || !Array.isArray(raw.applications) || !Array.isArray(raw.interviewLogs)) throw new Error('请选择有效的完整备份文件'); const incoming = raw.applications.map(parseJob); const current = mode === 'merge' ? loadApplications(userId, storage) : []; const keys = new Set(current.map((j) => `${j.company.trim().toLowerCase()}\u0000${j.position.trim().toLowerCase()}`)); const added = incoming.filter((j) => { const key = `${j.company.trim().toLowerCase()}\u0000${j.position.trim().toLowerCase()}`; if (keys.has(key)) return false; keys.add(key); return true; }); saveApplications(userId, [...current, ...added], storage); const logs = mode === 'merge' ? loadInterviewLogs(userId, storage) : []; const logIds = new Set(logs.map((log) => log.id)); saveInterviewLogs(userId, [...logs, ...raw.interviewLogs.filter((log) => !logIds.has(log.id))], storage); for (const [sourceId, catalog] of Object.entries(raw.sourceIndexes || {})) saveSourceIndex(userId, sourceId, catalog, storage); if (raw.settings) saveSettings(userId, { notifications: Boolean(raw.settings.notifications) }, storage); return { added: added.length, skipped: incoming.length - added.length }; }
+export function estimateUserBytes(userId: string, storage: StoragePort = browserStorage()) { let bytes = 0; if (storage.key && typeof storage.length === 'number') for (let i = 0; i < storage.length; i++) { const key = storage.key(i) || ''; if (key.startsWith(`qz_${userId}_`)) bytes += (key.length + (storage.getItem(key)?.length || 0)) * 2; } return bytes; }
+export function migrateLegacyData(userId: string, storage: StoragePort = browserStorage()) { if (storage.getItem(MIGRATION_KEY)) return 0; let jobs: Job[] = []; const old = storage.getItem(STORAGE_KEY) || storage.getItem('applications'); if (old) try { jobs = parseBackup(old); } catch { jobs = []; } if (jobs.length) saveApplications(userId, jobs, storage); const catalogsRaw = storage.getItem(CATALOGS_KEY); if (catalogsRaw) try { for (const [id, catalog] of Object.entries(readCatalogStore(JSON.parse(catalogsRaw)).catalogs)) saveSourceIndex(userId, id, catalog, storage); } catch { /* Preserve malformed legacy data. */ } for (const key of [STORAGE_KEY, RECOVERY_KEY, 'applications', CATALOGS_KEY, CATALOG_KEY, DRAFT_KEY]) storage.removeItem?.(key); storage.setItem(MIGRATION_KEY, new Date().toISOString()); return jobs.length; }
+// Compatibility helpers for legacy regression tests.
+export function readStorage(storage: StoragePort) { const raw = storage.getItem(STORAGE_KEY); return { raw, jobs: raw ? parseBackup(raw) : [] }; }
+export function writeStorage(storage: StoragePort, jobs: Job[], expected: string | null) { if (storage.getItem(STORAGE_KEY) !== expected) throw new Error('另一窗口已更新数据，请重新打开记录后再保存。'); if (expected) storage.setItem(RECOVERY_KEY, expected); const raw = encodeBackup(jobs); storage.setItem(STORAGE_KEY, raw); return raw; }

@@ -9,7 +9,7 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
-    "lint": "oxlint app lib components/screenshot-import.tsx hooks/use-tracker.ts",
+    "lint": "oxlint app lib components/catalog-lookup.tsx components/screenshot-import.tsx components/dashboard-view.tsx components/schedule-view.tsx components/user-switcher.tsx components/pwa-register.tsx hooks/use-tracker.ts hooks/use-current-user.ts",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "format": "oxfmt"

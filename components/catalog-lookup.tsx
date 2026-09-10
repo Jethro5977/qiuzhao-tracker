@@ -10,19 +10,15 @@ import {
 } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  CATALOG_KEY,
-  CATALOGS_KEY,
   lookupSerial,
   parseCatalog,
-  readCatalogStore,
 } from '@/lib/catalog';
-import type { Catalog, CatalogStore } from '@/lib/catalog';
+import type { Catalog } from '@/lib/catalog';
+import { loadSourceIndexes, saveSourceIndex } from '@/lib/storage';
 import { JOB_SOURCES } from '@/lib/tracker';
 import type { Job, JobSourceId } from '@/lib/tracker';
 
-const emptyStore = (): CatalogStore => ({ version: 2, catalogs: {} });
-
-export function CatalogLookup({ onSelect }: { onSelect: (job: Job) => void }) {
+export function CatalogLookup({ userId, onSelect }: { userId: string; onSelect: (job: Job) => void | boolean }) {
   const [catalogs, setCatalogs] = useState<Record<string, Catalog>>({});
   const [sourceId, setSourceId] = useState<JobSourceId>(JOB_SOURCES[0].id);
   const [serial, setSerial] = useState('');
@@ -37,44 +33,18 @@ export function CatalogLookup({ onSelect }: { onSelect: (job: Job) => void }) {
   useEffect(() => {
     queueMicrotask(() => {
       try {
-        const current = localStorage.getItem(CATALOGS_KEY);
-        if (current) {
-          setCatalogs(readCatalogStore(JSON.parse(current)).catalogs);
-          return;
-        }
-        const legacy = localStorage.getItem(CATALOG_KEY);
-        if (!legacy) return;
-        const parsed = JSON.parse(legacy) as Partial<Catalog>;
-        if (!Array.isArray(parsed.rows) || typeof parsed.importedAt !== 'string')
-          throw new Error();
-        const migrated: Catalog = {
-          sourceId: JOB_SOURCES[0].id,
-          sourceName: JOB_SOURCES[0].name,
-          sourceUrl: JOB_SOURCES[0].url,
-          importedAt: parsed.importedAt,
-          rows: parsed.rows,
-        };
-        const next: CatalogStore = {
-          version: 2,
-          catalogs: { [JOB_SOURCES[0].id]: migrated },
-        };
-        localStorage.setItem(CATALOGS_KEY, JSON.stringify(next));
-        setCatalogs(next.catalogs);
+        setCatalogs(loadSourceIndexes(userId));
       } catch {
         setError('无法读取岗位索引，请重新导入源表。台账记录不受影响。');
       }
     });
-  }, []);
+  }, [userId]);
 
   function importSource(text: string) {
     try {
       const imported = parseCatalog(text, selectedSource);
-      const next: CatalogStore = {
-        ...emptyStore(),
-        catalogs: { ...catalogs, [sourceId]: imported },
-      };
-      localStorage.setItem(CATALOGS_KEY, JSON.stringify(next));
-      setCatalogs(next.catalogs);
+      saveSourceIndex(userId, sourceId, imported);
+      setCatalogs({ ...catalogs, [sourceId]: imported });
       setError('');
       setManage(false);
       setSourceText('');
